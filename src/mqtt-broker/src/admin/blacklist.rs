@@ -19,7 +19,7 @@ use crate::security::AuthDriver;
 use grpc_clients::pool::ClientPool;
 use metadata_struct::acl::mqtt_blacklist::{MqttAclBlackList, MqttAclBlackListType};
 use protocol::broker_mqtt::broker_mqtt_admin::{
-    BlacklistRaw, CreateBlacklistRequest, DeleteBlacklistRequest, ListBlacklistRequest,
+    CreateBlacklistRequest, DeleteBlacklistRequest, ListBlacklistRequest,
 };
 use std::sync::Arc;
 use tonic::Request;
@@ -29,34 +29,26 @@ pub async fn list_blacklist_by_req(
     cache_manager: &Arc<CacheManager>,
     client_pool: &Arc<ClientPool>,
     request: Request<ListBlacklistRequest>,
-) -> Result<(Vec<BlacklistRaw>, usize), MqttBrokerError> {
+) -> Result<(Vec<Vec<u8>>, usize), MqttBrokerError> {
     let req = request.into_inner();
-    let blacklists = extract_blacklist(cache_manager, client_pool).await?;
+    let auth_driver = AuthDriver::new(cache_manager.clone(), client_pool.clone());
+    let blacklists = auth_driver.read_all_blacklist().await?;
 
     let filtered = apply_filters(blacklists, &req.options);
     let sorted = apply_sorting(filtered, &req.options);
     let pagination = apply_pagination(sorted, &req.options);
 
-    Ok(pagination)
+    let mut blacklists_list = Vec::new();
+    for ele in pagination.0 {
+        let blacklist = ele
+            .encode()
+            .map_err(|e| MqttBrokerError::CommonError(e.to_string()))?;
+        blacklists_list.push(blacklist);
+    }
+
+    Ok((blacklists_list, pagination.1))
 }
 
-async fn extract_blacklist(
-    cache_manager: &Arc<CacheManager>,
-    client_pool: &Arc<ClientPool>,
-) -> Result<Vec<BlacklistRaw>, MqttBrokerError> {
-    let auth_driver = AuthDriver::new(cache_manager.clone(), client_pool.clone());
-    match auth_driver.read_all_blacklist().await {
-        Ok(data) => {
-            let mut blacklists = Vec::new();
-            for element in data {
-                let blacklist_raw = BlacklistRaw::from(element);
-                blacklists.push(blacklist_raw)
-            }
-            Ok(blacklists)
-        }
-        Err(e) => Err(e),
-    }
-}
 // Delete blacklist entry
 pub async fn delete_blacklist_by_req(
     cache_manager: &Arc<CacheManager>,
@@ -108,7 +100,7 @@ pub async fn create_blacklist_by_req(
     Ok(())
 }
 
-impl Queryable for BlacklistRaw {
+impl Queryable for MqttAclBlackList {
     fn get_field_str(&self, field: &str) -> Option<String> {
         match field {
             "blacklist_type" => Some(self.blacklist_type.to_string()),

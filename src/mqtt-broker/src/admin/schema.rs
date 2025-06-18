@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::handler::error::MqttBrokerError;
+use crate::{
+    admin::query::{apply_filters, apply_pagination, apply_sorting, Queryable},
+    handler::error::MqttBrokerError,
+};
 
 use common_config::mqtt::broker_mqtt_conf;
 use grpc_clients::{
@@ -40,7 +43,7 @@ use tonic::Request;
 pub async fn list_schema_by_req(
     client_pool: &Arc<ClientPool>,
     request: Request<MqttListSchemaRequest>,
-) -> Result<Vec<Vec<u8>>, MqttBrokerError> {
+) -> Result<(Vec<Vec<u8>>, usize), MqttBrokerError> {
     let req = request.into_inner();
     let config = broker_mqtt_conf();
     let request = ListSchemaRequest {
@@ -48,12 +51,28 @@ pub async fn list_schema_by_req(
         schema_name: req.schema_name.clone(),
     };
 
-    let schemas = list_schema(client_pool, &config.placement_center, request)
+    let schemas_bytes = list_schema(client_pool, &config.placement_center, request)
         .await
         .map_err(|e| MqttBrokerError::CommonError(e.to_string()))?
         .schemas;
+    let mut schemas = Vec::new();
+    for schema in schemas_bytes {
+        let schema_data = serde_json::from_slice::<SchemaData>(&schema)
+            .map_err(|e| MqttBrokerError::CommonError(e.to_string()))?;
+        schemas.push(schema_data);
+    }
 
-    Ok(schemas)
+    let filtered = apply_filters(schemas, &req.options);
+    let sorted = apply_sorting(filtered, &req.options);
+    let pagination = apply_pagination(sorted, &req.options);
+
+    let mut schema_list = Vec::new();
+    for ele in pagination.0 {
+        let schema = ele.encode();
+        schema_list.push(schema);
+    }
+
+    Ok((schema_list, pagination.1))
 }
 
 // Create a new schema
@@ -207,4 +226,17 @@ pub async fn unbind_schema_by_req(
         .map_err(|e| MqttBrokerError::CommonError(e.to_string()))?;
 
     Ok(())
+}
+
+impl Queryable for SchemaData {
+    fn get_field_str(&self, field: &str) -> Option<String> {
+        match field {
+            "cluster_name" => Some(self.cluster_name.clone()),
+            "name" => Some(self.name.clone()),
+            "schema_type" => Some(self.schema_type.to_string()),
+            "schema" => Some(self.schema.clone()),
+            "desc" => Some(self.desc.clone()),
+            _ => None,
+        }
+    }
 }

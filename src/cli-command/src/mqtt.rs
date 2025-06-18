@@ -33,6 +33,7 @@ use grpc_clients::mqtt::admin::call::{
     mqtt_broker_update_schema,
 };
 use grpc_clients::pool::ClientPool;
+use metadata_struct::acl::mqtt_blacklist::MqttAclBlackList;
 use metadata_struct::mqtt::auto_subscribe_rule::MqttAutoSubscribeRule;
 use metadata_struct::mqtt::bridge::connector::MQTTConnector;
 use metadata_struct::schema::SchemaData;
@@ -737,11 +738,13 @@ impl MqttBrokerCommand {
                     "blacklist_type"
                 ]);
                 for blacklist in data.blacklists {
+                    let mqtt_acl_blacklist =
+                        serde_json::from_slice::<MqttAclBlackList>(blacklist.as_slice()).unwrap();
                     table.add_row(row![
-                        blacklist.blacklist_type,
-                        blacklist.resource_name,
-                        blacklist.end_time,
-                        blacklist.blacklist_type
+                        mqtt_acl_blacklist.blacklist_type,
+                        mqtt_acl_blacklist.resource_name,
+                        mqtt_acl_blacklist.end_time,
+                        mqtt_acl_blacklist.blacklist_type
                     ]);
                 }
                 // output cmd
